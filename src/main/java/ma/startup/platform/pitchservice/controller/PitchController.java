@@ -4,9 +4,12 @@ package ma.startup.platform.pitchservice.controller;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import ma.startup.platform.pitchservice.dto.PitchRequestDTO;
-import ma.startup.platform.pitchservice.dto.PitchResponseDTO;
-import ma.startup.platform.pitchservice.dto.PitchStatsDTO;
+import ma.startup.platform.pitchservice.client.AuthServiceClient;
+import ma.startup.platform.pitchservice.client.StartupServiceClient;
+import ma.startup.platform.pitchservice.dto.*;
+import ma.startup.platform.pitchservice.model.Pitch;
+import ma.startup.platform.pitchservice.model.PitchType;
+import ma.startup.platform.pitchservice.repository.PitchRepository;
 import ma.startup.platform.pitchservice.service.PitchService;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -26,6 +29,9 @@ import java.util.UUID;
 public class PitchController {
 
     private final PitchService pitchService;
+    private final AuthServiceClient authServiceClient;
+    private final StartupServiceClient startupServiceClient;
+    private final PitchRepository pitchRepository;
 
     /**
      * ENDPOINT PRINCIPAL : Générer un nouveau pitch avec l'IA
@@ -174,5 +180,51 @@ public class PitchController {
         log.info("Récupération des statistiques des pitchs");
         PitchStatsDTO stats = pitchService.getMyPitchStats(authToken);
         return ResponseEntity.ok(stats);
+    }
+    @PostMapping("/generate-test")
+    public ResponseEntity<PitchResponseDTO> generateTestPitch(
+            @Valid @RequestBody PitchRequestDTO request,
+            @RequestHeader("Authorization") String authToken
+    ) {
+        log.info("Test de génération de pitch SANS Gemini");
+
+        // Vérifier l'utilisateur
+        UserDTO user = authServiceClient.getCurrentUser(authToken);
+
+        // Récupérer la startup
+        StartupDTO startup = startupServiceClient.getMyStartup(authToken);
+
+        // Créer un pitch de test SANS appeler Gemini
+        Pitch pitch = Pitch.builder()
+                .startupId(startup.getId())
+                .probleme(request.getProbleme())
+                .solution(request.getSolution())
+                .cible(request.getCible())
+                .avantage(request.getAvantage())
+                .pitchGenere("PITCH DE TEST : " + startup.getNom() + " résout " + request.getProbleme() + " avec " + request.getSolution())
+                .type(PitchType.ELEVATOR)
+                .isFavorite(false)
+                .build();
+
+        Pitch savedPitch = pitchRepository.save(pitch);
+
+        return ResponseEntity.status(HttpStatus.CREATED).body(mapToResponseDTO(savedPitch));
+    }
+
+    private PitchResponseDTO mapToResponseDTO(Pitch pitch) {
+        return PitchResponseDTO.builder()
+                .id(pitch.getId())
+                .startupId(pitch.getStartupId())
+                .probleme(pitch.getProbleme())
+                .solution(pitch.getSolution())
+                .cible(pitch.getCible())
+                .avantage(pitch.getAvantage())
+                .pitchGenere(pitch.getPitchGenere())
+                .type(pitch.getType())
+                .rating(pitch.getRating())
+                .isFavorite(pitch.getIsFavorite())
+                .createdAt(pitch.getCreatedAt())
+                .updatedAt(pitch.getUpdatedAt())
+                .build();
     }
 }

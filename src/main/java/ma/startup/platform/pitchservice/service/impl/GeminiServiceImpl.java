@@ -1,26 +1,22 @@
 package ma.startup.platform.pitchservice.service.impl;
 
-import com.google.api.client.util.Value;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import lombok.extern.slf4j.Slf4j;
-import ma.startup.platform.pitchservice.dto.GeminiRequestDTO;
 import ma.startup.platform.pitchservice.dto.StartupDTO;
 import ma.startup.platform.pitchservice.exception.GeminiApiException;
 import ma.startup.platform.pitchservice.model.PitchType;
 import ma.startup.platform.pitchservice.service.GeminiService;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
 
-import org.springframework.http.HttpHeaders;  // ✅ CORRECT
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 @Slf4j
@@ -31,9 +27,6 @@ public class GeminiServiceImpl implements GeminiService {
 
     @Value("${gemini.api.url}")
     private String apiUrl;
-
-    @Value("${gemini.api.timeout:15000}")
-    private int timeout;
 
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
@@ -52,18 +45,18 @@ public class GeminiServiceImpl implements GeminiService {
             StartupDTO startup,
             PitchType type
     ) {
-        log.info("Génération de pitch pour startup: {} (Type: {})", startup.getNom(), type);
+        log.info("🤖 Génération de pitch avec Gemini 2.0 Flash pour: {} (Type: {})", startup.getNom(), type);
 
         String prompt = buildPrompt(probleme, solution, cible, avantage, startup, type);
 
         try {
             String response = callGeminiApi(prompt);
-            log.info("Pitch généré avec succès pour startup: {}", startup.getNom());
+            log.info("✅ Pitch généré avec succès par Gemini");
             return response;
 
         } catch (Exception e) {
-            log.error("Erreur lors de la génération du pitch: {}", e.getMessage(), e);
-            throw new GeminiApiException("Impossible de générer le pitch", e);
+            log.error("❌ Erreur lors de la génération du pitch: {}", e.getMessage(), e);
+            throw new GeminiApiException("Impossible de générer le pitch avec Gemini", e);
         }
     }
 
@@ -91,55 +84,45 @@ public class GeminiServiceImpl implements GeminiService {
         }
     }
 
-    /**
-     * Appel à l'API Google Gemini
-     */
     private String callGeminiApi(String prompt) {
-        String url = apiUrl + "?key=" + apiKey;
+        log.info("🔗 Appel à l'API Gemini 2.0 Flash...");
 
-        // Construire la requête
-        GeminiRequestDTO.Part part = GeminiRequestDTO.Part.builder()
-                .text(prompt)
-                .build();
+        Map<String, Object> part = new HashMap<>();
+        part.put("text", prompt);
 
-        GeminiRequestDTO.Content content = GeminiRequestDTO.Content.builder()
-                .parts(List.of(part))
-                .build();
+        Map<String, Object> content = new HashMap<>();
+        content.put("parts", List.of(part));
 
-        GeminiRequestDTO request = GeminiRequestDTO.builder()
-                .contents(List.of(content))
-                .build();
+        Map<String, Object> requestBody = new HashMap<>();
+        requestBody.put("contents", List.of(content));
 
-        // Headers
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("X-goog-api-key", apiKey);
 
-        HttpEntity<GeminiRequestDTO> entity = new HttpEntity<>(request, headers);
+        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
 
         try {
-            // Appel API avec timeout
             ResponseEntity<String> response = restTemplate.exchange(
-                    url,
+                    apiUrl,
                     HttpMethod.POST,
                     entity,
                     String.class
             );
 
             if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
+                log.info("✅ Réponse Gemini reçue avec succès");
                 return extractTextFromResponse(response.getBody());
             } else {
                 throw new GeminiApiException("Réponse invalide de l'API Gemini");
             }
 
         } catch (RestClientException e) {
-            log.error("Erreur lors de l'appel à l'API Gemini: {}", e.getMessage());
+            log.error("❌ Erreur lors de l'appel à l'API Gemini: {}", e.getMessage());
             throw new GeminiApiException("Erreur de communication avec l'API Gemini", e);
         }
     }
 
-    /**
-     * Extraire le texte de la réponse JSON de Gemini
-     */
     private String extractTextFromResponse(String jsonResponse) {
         try {
             JsonNode root = objectMapper.readTree(jsonResponse);
@@ -163,9 +146,6 @@ public class GeminiServiceImpl implements GeminiService {
         }
     }
 
-    /**
-     * Construire le prompt pour la génération de pitch
-     */
     private String buildPrompt(
             String probleme,
             String solution,
@@ -222,14 +202,12 @@ public class GeminiServiceImpl implements GeminiService {
 
         prompt.append("Ton : Professionnel, confiant, concis\n");
         prompt.append("Format : Un ou plusieurs paragraphes fluides sans bullet points\n");
-        prompt.append("Langue : Français professionnel");
+        prompt.append("Langue : Français professionnel\n\n");
+        prompt.append("Réponds UNIQUEMENT avec le pitch, sans introduction ni commentaire.");
 
         return prompt.toString();
     }
 
-    /**
-     * Construire le prompt pour améliorer un pitch
-     */
     private String buildImprovementPrompt(String pitchExistant, String suggestions) {
         return String.format(
                 "Tu es un expert en pitchs de start-ups.\n\n" +
@@ -237,14 +215,11 @@ public class GeminiServiceImpl implements GeminiService {
                         "Suggestions d'amélioration :\n%s\n\n" +
                         "Améliore ce pitch en tenant compte des suggestions. " +
                         "Garde le même ton professionnel et la même longueur approximative. " +
-                        "Réponds uniquement avec le pitch amélioré.",
+                        "Réponds uniquement avec le pitch amélioré, sans commentaire.",
                 pitchExistant, suggestions
         );
     }
 
-    /**
-     * Construire le prompt pour les suggestions
-     */
     private String buildSuggestionsPrompt(String pitch) {
         return String.format(
                 "Tu es un expert en pitchs de start-ups.\n\n" +
