@@ -10,10 +10,9 @@ import ma.startup.platform.pitchservice.exception.PitchNotFoundException;
 import ma.startup.platform.pitchservice.model.Pitch;
 import ma.startup.platform.pitchservice.model.PitchType;
 import ma.startup.platform.pitchservice.repository.PitchRepository;
-import ma.startup.platform.pitchservice.service.GeminiService;
+import ma.startup.platform.pitchservice.service.AIService;
 import ma.startup.platform.pitchservice.service.PitchService;
 import org.springframework.stereotype.Service;
-
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -30,13 +29,13 @@ import java.util.stream.Collectors;
 public class PitchServiceImpl implements PitchService {
 
     private final PitchRepository pitchRepository;
-    private final GeminiService geminiService;
+    private final AIService aiService; // ✅ CHANGEMENT: Utilise l'interface générique
     private final AuthServiceClient authServiceClient;
     private final StartupServiceClient startupServiceClient;
 
     @Override
     public PitchResponseDTO generatePitch(PitchRequestDTO request, String authToken) {
-        log.info("Début de génération de pitch");
+        log.info("Début de génération de pitch avec Hugging Face");
 
         // 1. Vérifier l'utilisateur via Auth-Service
         UserDTO user = authServiceClient.getCurrentUser(authToken);
@@ -46,8 +45,8 @@ public class PitchServiceImpl implements PitchService {
         StartupDTO startup = startupServiceClient.getMyStartup(authToken);
         log.info("Startup récupérée: {} (ID: {})", startup.getNom(), startup.getId());
 
-        // 3. Générer le pitch avec Gemini
-        String pitchGenere = geminiService.generatePitch(
+        // 3. Générer le pitch avec Hugging Face (AI Service)
+        String pitchGenere = aiService.generatePitch(
                 request.getProbleme(),
                 request.getSolution(),
                 request.getCible(),
@@ -55,7 +54,7 @@ public class PitchServiceImpl implements PitchService {
                 startup,
                 PitchType.ELEVATOR
         );
-        log.info("Pitch généré avec succès");
+        log.info("Pitch généré avec succès - Longueur: {} caractères", pitchGenere.length());
 
         // 4. Sauvegarder en base de données
         Pitch pitch = Pitch.builder()
@@ -80,13 +79,9 @@ public class PitchServiceImpl implements PitchService {
     public List<PitchResponseDTO> getMyPitchs(String authToken) {
         log.info("Récupération des pitchs");
 
-        // Vérifier l'utilisateur
         UserDTO user = authServiceClient.getCurrentUser(authToken);
-
-        // Récupérer la startup
         StartupDTO startup = startupServiceClient.getMyStartup(authToken);
 
-        // Récupérer tous les pitchs
         List<Pitch> pitchs = pitchRepository.findByStartupIdOrderByCreatedAtDesc(startup.getId());
         log.info("Nombre de pitchs trouvés: {}", pitchs.size());
 
@@ -100,13 +95,9 @@ public class PitchServiceImpl implements PitchService {
     public PitchResponseDTO getPitchById(UUID pitchId, String authToken) {
         log.info("Récupération du pitch ID: {}", pitchId);
 
-        // Vérifier l'utilisateur
         UserDTO user = authServiceClient.getCurrentUser(authToken);
-
-        // Récupérer la startup
         StartupDTO startup = startupServiceClient.getMyStartup(authToken);
 
-        // Récupérer le pitch
         Pitch pitch = pitchRepository.findByIdAndStartupId(pitchId, startup.getId())
                 .orElseThrow(() -> new PitchNotFoundException(pitchId));
 
@@ -117,13 +108,9 @@ public class PitchServiceImpl implements PitchService {
     public PitchResponseDTO updatePitch(UUID pitchId, PitchRequestDTO request, String authToken) {
         log.info("Mise à jour du pitch ID: {}", pitchId);
 
-        // Vérifier l'utilisateur
         UserDTO user = authServiceClient.getCurrentUser(authToken);
-
-        // Récupérer la startup
         StartupDTO startup = startupServiceClient.getMyStartup(authToken);
 
-        // Récupérer le pitch existant
         Pitch pitch = pitchRepository.findByIdAndStartupId(pitchId, startup.getId())
                 .orElseThrow(() -> new PitchNotFoundException(pitchId));
 
@@ -133,8 +120,8 @@ public class PitchServiceImpl implements PitchService {
         pitch.setCible(request.getCible());
         pitch.setAvantage(request.getAvantage());
 
-        // Régénérer le pitch avec les nouvelles infos
-        String newPitch = geminiService.generatePitch(
+        // Régénérer le pitch avec Hugging Face
+        String newPitch = aiService.generatePitch(
                 request.getProbleme(),
                 request.getSolution(),
                 request.getCible(),
@@ -155,13 +142,9 @@ public class PitchServiceImpl implements PitchService {
     public void deletePitch(UUID pitchId, String authToken) {
         log.info("Suppression du pitch ID: {}", pitchId);
 
-        // Vérifier l'utilisateur
         UserDTO user = authServiceClient.getCurrentUser(authToken);
-
-        // Récupérer la startup
         StartupDTO startup = startupServiceClient.getMyStartup(authToken);
 
-        // Vérifier que le pitch existe et appartient à la startup
         if (!pitchRepository.existsByIdAndStartupId(pitchId, startup.getId())) {
             throw new PitchNotFoundException(pitchId);
         }
@@ -174,17 +157,12 @@ public class PitchServiceImpl implements PitchService {
     public PitchResponseDTO toggleFavorite(UUID pitchId, String authToken) {
         log.info("Toggle favori pour pitch ID: {}", pitchId);
 
-        // Vérifier l'utilisateur
         UserDTO user = authServiceClient.getCurrentUser(authToken);
-
-        // Récupérer la startup
         StartupDTO startup = startupServiceClient.getMyStartup(authToken);
 
-        // Récupérer le pitch
         Pitch pitch = pitchRepository.findByIdAndStartupId(pitchId, startup.getId())
                 .orElseThrow(() -> new PitchNotFoundException(pitchId));
 
-        // Toggle favori
         pitch.setIsFavorite(!pitch.getIsFavorite());
 
         Pitch updatedPitch = pitchRepository.save(pitch);
@@ -197,22 +175,16 @@ public class PitchServiceImpl implements PitchService {
     public PitchResponseDTO ratePitch(UUID pitchId, Integer rating, String authToken) {
         log.info("Notation du pitch ID: {} avec note: {}", pitchId, rating);
 
-        // Validation du rating
         if (rating < 1 || rating > 5) {
             throw new IllegalArgumentException("Le rating doit être entre 1 et 5");
         }
 
-        // Vérifier l'utilisateur
         UserDTO user = authServiceClient.getCurrentUser(authToken);
-
-        // Récupérer la startup
         StartupDTO startup = startupServiceClient.getMyStartup(authToken);
 
-        // Récupérer le pitch
         Pitch pitch = pitchRepository.findByIdAndStartupId(pitchId, startup.getId())
                 .orElseThrow(() -> new PitchNotFoundException(pitchId));
 
-        // Mettre à jour le rating
         pitch.setRating(rating);
 
         Pitch updatedPitch = pitchRepository.save(pitch);
@@ -226,13 +198,9 @@ public class PitchServiceImpl implements PitchService {
     public List<PitchResponseDTO> getFavoritePitchs(String authToken) {
         log.info("Récupération des pitchs favoris");
 
-        // Vérifier l'utilisateur
         UserDTO user = authServiceClient.getCurrentUser(authToken);
-
-        // Récupérer la startup
         StartupDTO startup = startupServiceClient.getMyStartup(authToken);
 
-        // Récupérer les pitchs favoris
         List<Pitch> favoritePitchs = pitchRepository
                 .findByStartupIdAndIsFavoriteTrueOrderByCreatedAtDesc(startup.getId());
 
@@ -248,13 +216,9 @@ public class PitchServiceImpl implements PitchService {
     public Page<PitchResponseDTO> getMyPitchsPaginated(String authToken, Pageable pageable) {
         log.info("Récupération des pitchs avec pagination");
 
-        // Vérifier l'utilisateur
         UserDTO user = authServiceClient.getCurrentUser(authToken);
-
-        // Récupérer la startup
         StartupDTO startup = startupServiceClient.getMyStartup(authToken);
 
-        // Récupérer les pitchs paginés
         Page<Pitch> pitchsPage = pitchRepository.findByStartupId(startup.getId(), pageable);
 
         return pitchsPage.map(this::mapToResponseDTO);
@@ -265,13 +229,9 @@ public class PitchServiceImpl implements PitchService {
     public PitchStatsDTO getMyPitchStats(String authToken) {
         log.info("Récupération des statistiques des pitchs");
 
-        // Vérifier l'utilisateur
         UserDTO user = authServiceClient.getCurrentUser(authToken);
-
-        // Récupérer la startup
         StartupDTO startup = startupServiceClient.getMyStartup(authToken);
 
-        // Calculer les stats
         long totalPitchs = pitchRepository.countByStartupId(startup.getId());
 
         List<Pitch> allPitchs = pitchRepository.findByStartupIdOrderByCreatedAtDesc(startup.getId());
@@ -281,7 +241,6 @@ public class PitchServiceImpl implements PitchService {
 
         Double averageRating = pitchRepository.getAverageRatingForStartup(startup.getId());
 
-        // Stats par type
         Map<String, Long> pitchsByType = new HashMap<>();
         List<Object[]> typeStats = pitchRepository.countByTypeForStartup(startup.getId());
         for (Object[] stat : typeStats) {
@@ -296,9 +255,6 @@ public class PitchServiceImpl implements PitchService {
                 .build();
     }
 
-    /**
-     * Mapper Pitch Entity vers PitchResponseDTO
-     */
     private PitchResponseDTO mapToResponseDTO(Pitch pitch) {
         return PitchResponseDTO.builder()
                 .id(pitch.getId())
